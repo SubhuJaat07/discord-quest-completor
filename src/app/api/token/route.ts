@@ -104,9 +104,7 @@ export async function POST(request: NextRequest) {
       ]
     })
 
-    // 🍪🍪🍪 CRITICAL: Set cookies DIRECTLY on response object! 🍪🍪🍪
-    // This ensures cookies are actually sent to the browser!
-    
+    // Set cookies directly on the response object so the browser receives them.
     // Session ID cookie
     response.cookies.set(SESSION_COOKIE_NAME, sessionId, {
       httpOnly: true,

@@ -1,5 +1,5 @@
 # ============================================================
-# Discord Quest API — Docker build (direct REST API engine)
+# Discord Quest Completor — Docker build (direct REST API engine)
 # No Chromium/Puppeteer → tiny image, fast builds
 # ============================================================
 
@@ -24,8 +24,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-# Generate Prisma client (fails the build loudly if the schema is broken)
-RUN npx prisma generate
 
 RUN npm run build
 
@@ -38,7 +36,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # PORT is overridden automatically by Railway/Coolify — server.js honors it
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-# Persistent data (24h monitor state, future SQLite).
+# Persistent data (24h monitor state — encrypted at rest).
 # Coolify: mount a volume at /app/data · Railway: add a volume · compose: see docker-compose.yml
 ENV DATA_DIR=/app/data
 

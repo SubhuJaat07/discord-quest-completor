@@ -1,16 +1,16 @@
 services:
-  discord-quest-api:
+  discord-quest-completor:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: discord-quest-api
+    container_name: discord-quest-completor
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - NODE_ENV=production
       - PORT=${PORT:-3000}
-      # Persistent storage for the 24h monitor (token + schedule + history).
+      # Persistent storage for the 24h monitor (encrypted token + schedule + history).
       # Mount this volume so redeploys don't lose the monitor!
       - DATA_DIR=/app/data
       # Engine tuning (defaults are safe — see docs)
@@ -21,7 +21,7 @@ services:
       - path: .env
         required: false
     volumes:
-      # 👇 data survives redeploys (Coolify: point this at any volume/host path)
+      # data survives redeploys (Coolify: point this at any volume/host path)
       - quest-data:/app/data
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${PORT:-3000}/api/health || exit 1"]

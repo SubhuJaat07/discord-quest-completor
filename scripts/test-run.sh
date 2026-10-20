@@ -13,7 +13,6 @@ DATA_DIR="${DATA_DIR:-./data}"
 echo "── [1/5] Installing deps (if needed)…"
 if [ ! -d node_modules ]; then
   (command -v bun >/dev/null 2>&1 && bun install) || npm ci --ignore-scripts || npm install --ignore-scripts
-  npx prisma generate || true
 fi
 
 echo "── [2/5] Building Next.js standalone…"

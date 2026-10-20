@@ -1,6 +1,6 @@
 // Session & Token Management Utilities
-// Cookie-based persistent authentication
-// Survives redeloys - token stored securely in httpOnly cookie
+// Cookie-based persistent authentication that survives redeploys —
+// the token is stored in an httpOnly cookie.
 
 import { cookies } from 'next/headers'
 
@@ -144,7 +144,7 @@ export async function setSessionCookies(sessionId: string, token: string, user: 
       path: '/'
     })
     
-    // Set token cookie (also httpOnly) - encrypted would be better but this works
+    // Token cookie — httpOnly so JavaScript can never read it
     cookieStore.set(TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',

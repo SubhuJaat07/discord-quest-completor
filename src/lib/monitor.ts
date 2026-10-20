@@ -1,5 +1,5 @@
 /**
- * 24-Hour Quest Monitor (v3.2.0)
+ * 24-Hour Quest Monitor
  *
  * A server-side scheduler that:
  *   - every N hours (default 24) fetches the user's quest list,
@@ -130,7 +130,7 @@ function sealToken(plain: string): string {
 function unsealToken(stored: string): string | null {
   if (!stored) return ''
   if (!stored.startsWith(ENC_PREFIX)) {
-    // Legacy pre-encryption file: accept once and migrate — the next
+    // Old pre-encryption file: accept once and migrate — the next
     // persist() re-writes it sealed. Plaintext is never re-written.
     return stored
   }
