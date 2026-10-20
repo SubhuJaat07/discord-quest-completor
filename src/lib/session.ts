@@ -56,7 +56,8 @@ export function createSession(token: string, user: SessionData['user']): string 
     createdAt: Date.now()
   })
 
-  console.log(`[SESSION] Created session ${sessionId} for user ${user.username}`)
+  // SECURITY: session IDs are treated as secrets — never written to logs.
+  console.log(`[SESSION] Session created for user ${user.username}`)
 
   cleanupOldSessions()
 
@@ -155,7 +156,8 @@ export async function setSessionCookies(sessionId: string, token: string, user: 
     // Store in memory too
     sessions.set(sessionId, { token, user, createdAt: Date.now() })
     
-    console.log(`[SESSION] Cookies set for session ${sessionId}`)
+    // SECURITY: session IDs are treated as secrets — never written to logs.
+    console.log('[SESSION] Session cookies set')
   } catch (error) {
     console.error('[SESSION] Error setting cookies:', error)
   }

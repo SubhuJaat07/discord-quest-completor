@@ -125,9 +125,8 @@ export async function POST(request: NextRequest) {
       path: '/'
     })
 
-    console.log(`[TOKEN] ✅ Cookies set directly on response object!`)
-    console.log(`[TOKEN] - Session Cookie: ${SESSION_COOKIE_NAME}=${sessionId}`)
-    console.log(`[TOKEN] - Token Cookie: ${TOKEN_COOKIE_NAME}=${trimmedToken.substring(0, 20)}...`)
+    // SECURITY: cookie values / token fragments are never written to logs.
+    console.log('[TOKEN] ✅ Session + token cookies set (httpOnly) — values not logged')
 
     return response
 

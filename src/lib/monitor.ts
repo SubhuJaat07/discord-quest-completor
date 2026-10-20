@@ -13,11 +13,14 @@
  * /app/data in Docker — mount it as a volume on Coolify/Railway to keep the
  * monitor across image rebuilds).
  *
- * NOTE: enabling the monitor stores the Discord token in that file, on the
- * user's OWN server only (single-user self-hosted tool).
+ * NOTE: enabling the monitor stores the Discord token in that file — but
+ * only SEALED with AES-256-GCM (see "Token encryption at rest" below),
+ * never in plaintext — on the user's OWN server only (single-user
+ * self-hosted tool).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto'
 import path from 'path'
 import {
   verifyToken,
@@ -63,6 +66,85 @@ export interface MonitorState {
 const DATA_DIR = process.env.DATA_DIR || './data'
 const MONITOR_FILE = path.join(DATA_DIR, 'monitor.json')
 
+// ============================================================
+// Token encryption at rest (AES-256-GCM)
+// ============================================================
+// The Discord token is NEVER written to monitor.json in plaintext — it is
+// sealed with AES-256-GCM before touching the disk.
+//
+// Key resolution order:
+//   1. MONITOR_ENCRYPTION_KEY env — any long random string (recommended for
+//      Docker volume deployments: survives image rebuilds).
+//   2. Auto-generated 32-byte key in $DATA_DIR/.monitor-key (mode 0600,
+//      never committed — data/ is git-ignored). It is a SEPARATE file, so a
+//      leak/backup of monitor.json alone reveals nothing.
+//
+// Stored format: "enc:v1:<iv:b64>:<tag:b64>:<ciphertext:b64>"
+// A wrong/rotated key → decryption fails → the stored token is discarded
+// (fail-closed) and the user simply re-enables the monitor. Never crashes.
+
+const ENC_PREFIX = 'enc:v1:'
+const KEY_FILE = path.join(DATA_DIR, '.monitor-key')
+
+let cachedKey: Buffer | null = null
+
+function getMonitorKey(): Buffer {
+  if (cachedKey) return cachedKey
+  const envKey = process.env.MONITOR_ENCRYPTION_KEY
+  if (envKey && envKey.length >= 8) {
+    // Any string works — derive a stable 32-byte key from it.
+    cachedKey = scryptSync(envKey, 'dqc-monitor-key-v1', 32)
+    return cachedKey
+  }
+  // Auto-generate once and persist next to the data (mode 0600).
+  try {
+    if (existsSync(KEY_FILE)) {
+      const k = Buffer.from(readFileSync(KEY_FILE, 'utf-8').trim(), 'hex')
+      if (k.length === 32) {
+        cachedKey = k
+        return cachedKey
+      }
+    }
+    mkdirSync(DATA_DIR, { recursive: true })
+    const k = randomBytes(32)
+    writeFileSync(KEY_FILE, k.toString('hex') + '\n', { mode: 0o600 })
+    cachedKey = k
+  } catch (e) {
+    // Worst case (read-only fs): per-process random key — monitor.json then
+    // only survives this process. Acceptable, and still never plaintext.
+    console.error('[monitor] key setup failed — using ephemeral key:', e)
+    cachedKey = randomBytes(32)
+  }
+  return cachedKey
+}
+
+function sealToken(plain: string): string {
+  if (!plain) return ''
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', getMonitorKey(), iv)
+  const ct = Buffer.concat([cipher.update(plain, 'utf-8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return `${ENC_PREFIX}${iv.toString('base64')}:${tag.toString('base64')}:${ct.toString('base64')}`
+}
+
+function unsealToken(stored: string): string | null {
+  if (!stored) return ''
+  if (!stored.startsWith(ENC_PREFIX)) {
+    // Legacy pre-encryption file: accept once and migrate — the next
+    // persist() re-writes it sealed. Plaintext is never re-written.
+    return stored
+  }
+  try {
+    const [iv, tag, ct] = stored.slice(ENC_PREFIX.length).split(':')
+    const decipher = createDecipheriv('aes-256-gcm', getMonitorKey(), Buffer.from(iv, 'base64'))
+    decipher.setAuthTag(Buffer.from(tag, 'base64'))
+    return Buffer.concat([decipher.update(Buffer.from(ct, 'base64')), decipher.final()]).toString('utf-8')
+  } catch {
+    // Wrong/rotated key or corrupted file → fail closed.
+    return null
+  }
+}
+
 /** How often the scheduler wakes up to check "is it time?" (drift-proof). */
 const CHECK_INTERVAL_MS = 60_000
 
@@ -80,7 +162,10 @@ function getState(): MonitorState | null {
 function persist() {
   try {
     mkdirSync(DATA_DIR, { recursive: true })
-    writeFileSync(MONITOR_FILE, JSON.stringify(getState(), null, 2))
+    const st = getState()
+    // SECURITY: the token is sealed (AES-256-GCM) before it touches the disk.
+    const onDisk = st ? { ...st, token: sealToken(st.token) } : st
+    writeFileSync(MONITOR_FILE, JSON.stringify(onDisk, null, 2))
   } catch (e) {
     console.error('[monitor] persist failed:', e)
   }
@@ -91,16 +176,31 @@ function restoreFromDisk() {
     if (!existsSync(MONITOR_FILE)) return
     const saved = JSON.parse(readFileSync(MONITOR_FILE, 'utf-8'))
     if (!saved || typeof saved !== 'object' || !saved.enabled) return
+
+    // SECURITY: unseal the token (AES-256-GCM). Fail closed on a bad key —
+    // the monitor disables itself instead of running with a broken token.
+    const token = unsealToken(typeof saved.token === 'string' ? saved.token : '')
+    if (token === null) {
+      saved.enabled = false
+      saved.token = ''
+      console.error(
+        '[monitor] stored token could not be decrypted (key changed or file corrupted) — monitor disabled; log in and re-enable it.',
+      )
+    } else {
+      saved.token = token
+    }
     g.__questMonitor!.state = saved as MonitorState
 
     // If the scheduled run was missed while the server was down → run shortly
     // after boot (quest expiry makes "late" better than "skipped").
-    if (saved.nextRunAt <= Date.now()) {
+    if (saved.enabled && saved.nextRunAt <= Date.now()) {
       saved.nextRunAt = Date.now() + 20_000
       persist()
       console.log('[monitor] restored — missed run detected, firing in ~20s')
     }
-    console.log(`[monitor] restored for @${saved.username} — next run ${new Date(saved.nextRunAt).toISOString()}`)
+    if (saved.enabled) {
+      console.log(`[monitor] restored for @${saved.username} — next run ${new Date(saved.nextRunAt).toISOString()}`)
+    }
   } catch (e) {
     console.error('[monitor] restore failed:', e)
   }
@@ -281,6 +381,10 @@ export function clearMonitor(): boolean {
   } catch { /* ignore */ }
   return true
 }
+
+// Note: data/.monitor-key (the auto-generated sealing key) is intentionally
+// kept — it is random bytes with no user data. clearMonitor() has already
+// wiped the sealed token itself.
 
 /** Silent token refresh: same user logs in with a newer token → update monitor. */
 export function updateMonitorToken(token: string, userId: string) {

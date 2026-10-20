@@ -1,6 +1,8 @@
-# Discord Quest Completor v3.5.0 — Verified Direct REST API Method
+# Discord Quest Completor v3.5.1 — Verified Direct REST API Method
 
 Auto-completes Discord quests via Discord's own REST endpoints. **No browser, no Puppeteer, no Chromium** — pure HTTP, Docker-friendly, ~180MB image instead of ~2GB.
+
+**v3.5.1:** 🔐 security hardening — no token/cookie values in server logs · monitor token sealed at rest with AES-256-GCM (`monitor.json` never contains plaintext) · `/api/debug` off by default & requires login (+ optional `DEBUG_KEY`). Zero UI changes.
 
 **v3.5.0:** 🌗 dark/light theme toggle · 🔓 open source (this repo) — your token never leaves your server · ✨ brand badge logo + animated RGB panel borders · 📄 Terms of Service & Privacy Policy pages.
 
@@ -17,6 +19,19 @@ Auto-completes Discord quests via Discord's own REST endpoints. **No browser, no
 ## Token safety — why you can trust this code
 
 The app is **fully open source and self-hosted**. Your Discord token is sent only to the server **you** deploy (Railway, Coolify, your own VPS — your choice). There is no central server, no analytics, no telemetry, and no account sign-up. Read every line yourself: this repository is the complete source. Deploy it privately and your token stays yours.
+
+### Where the token lives (and doesn't)
+
+| Place | How it's handled |
+|---|---|
+| Database | **Never stored** — the Prisma schema has no token field at all. |
+| Server logs | **Never logged** — no token fragments, no cookie values, no session IDs (v3.5.1). |
+| Browser | `httpOnly` + `sameSite=lax` + `secure` (production) cookie — unreadable to JavaScript. |
+| Server memory | In-memory session map only, needed to run the engine. Wiped on restart. |
+| Disk (`data/monitor.json`, only if you enable the 24h monitor) | **Sealed with AES-256-GCM** — the plaintext token is never written. Key comes from `MONITOR_ENCRYPTION_KEY` (env) or an auto-generated `data/.monitor-key` (mode 0600, git-ignored). |
+| Discord API | The only network destination — the engine talks directly to `https://discord.com/api/v10` (override via `DISCORD_API_BASE` for tests). No webhooks, no third-party URLs, no telemetry — grep the code, there are none. |
+
+Additional hardening in v3.5.1: `/api/debug` is disabled by default (404) and, when enabled via `DEBUG_ENABLED=true`, still requires login cookies and an optional `x-debug-key` header — and its responses never include tokens. Turning the monitor off wipes the stored (already-encrypted) token from disk.
 
 ## The Method (live-verified 2026-10-12)
 

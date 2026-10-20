@@ -1,6 +1,6 @@
 {
   "name": "discord-quest-api",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "private": true,
   "description": "Discord Quest Completion API \u2014 verified direct REST API method (no browser)",
   "scripts": {
