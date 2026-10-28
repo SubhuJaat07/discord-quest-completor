@@ -1,6 +1,6 @@
 // Session & Token Management Utilities
-// Cookie-based persistent authentication that survives redeploys —
-// the token is stored in an httpOnly cookie.
+// Cookie-based persistent authentication
+// Survives redeloys - token stored securely in httpOnly cookie
 
 import { cookies } from 'next/headers'
 
@@ -56,8 +56,7 @@ export function createSession(token: string, user: SessionData['user']): string 
     createdAt: Date.now()
   })
 
-  // SECURITY: session IDs are treated as secrets — never written to logs.
-  console.log(`[SESSION] Session created for user ${user.username}`)
+  console.log('[SESSION] Created session') // identifiers are never logged
 
   cleanupOldSessions()
 
@@ -144,7 +143,7 @@ export async function setSessionCookies(sessionId: string, token: string, user: 
       path: '/'
     })
     
-    // Token cookie — httpOnly so JavaScript can never read it
+    // Set token cookie (also httpOnly) - encrypted would be better but this works
     cookieStore.set(TOKEN_COOKIE_NAME, token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -156,8 +155,7 @@ export async function setSessionCookies(sessionId: string, token: string, user: 
     // Store in memory too
     sessions.set(sessionId, { token, user, createdAt: Date.now() })
     
-    // SECURITY: session IDs are treated as secrets — never written to logs.
-    console.log('[SESSION] Session cookies set')
+    console.log('[SESSION] Cookies set')
   } catch (error) {
     console.error('[SESSION] Error setting cookies:', error)
   }

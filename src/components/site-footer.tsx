@@ -5,6 +5,10 @@ export function SiteFooter() {
     <footer className="border-t border-border bg-card">
       <div className="mx-auto flex w-full max-w-2xl flex-col items-center gap-2 px-4 py-6 text-center">
         <nav className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <Link href="/badge" className="hover:text-foreground">
+            Badges
+          </Link>
+          <span className="text-border">·</span>
           <Link href="/terms" className="hover:text-foreground">
             Terms of Service
           </Link>

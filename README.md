@@ -18,7 +18,8 @@ Auto-complete Discord quests via Discord's own REST API. **No browser, no Puppet
 - **🛡️ 100 % server-side** — start a quest, close the tab, log out, switch off your PC. The engine keeps beating on the server until the quest completes.
 - **🚀 Start All** — one click queues every completable quest and runs them one after another, with a live queue panel.
 - **📝 Auto-accept** — unaccepted quests are enrolled automatically when their turn comes.
-- **📡 24 h Auto-Monitor** — optionally let the server check for new quests every 24 hours and complete them while you sleep. State survives redeploys (encrypted on disk).
+- **🏅 Badge system** — a `/badge` page driven by REAL Discord data: profile badges come live from `/users/{id}/profile`, and the Complete button runs the same quest engine (enroll → heartbeat → complete). Progress bars show Discord's own credited numbers — nothing local, nothing fake.
+- **📡 24 h Auto-Monitor** — optionally let the server check for new quests every 24 hours and complete them while you sleep. State survives redeploys (encrypted on disk + optional Supabase restore).
 - **🌗 Dark / light theme**, live timers, session restore on page reopen, rate-limit-aware fetch with backoff.
 
 ## How it works

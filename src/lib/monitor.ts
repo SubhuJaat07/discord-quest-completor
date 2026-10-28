@@ -1,5 +1,5 @@
 /**
- * 24-Hour Quest Monitor
+ * 24-Hour Quest Monitor (v3.2.0)
  *
  * A server-side scheduler that:
  *   - every N hours (default 24) fetches the user's quest list,
@@ -13,14 +13,16 @@
  * /app/data in Docker — mount it as a volume on Coolify/Railway to keep the
  * monitor across image rebuilds).
  *
- * NOTE: enabling the monitor stores the Discord token in that file — but
- * only SEALED with AES-256-GCM (see "Token encryption at rest" below),
- * never in plaintext — on the user's OWN server only (single-user
- * self-hosted tool).
+ * RESTART-PROOF (v3.6.0, private build): when SUPABASE_URL +
+ * SUPABASE_SERVICE_KEY are set, the toggle state and the SEALED token are
+ * mirrored to Supabase — so even a restart that wipes the entire data
+ * directory (no persistent volume) resumes the monitor from the cloud row.
+ *
+ * NOTE: enabling the monitor stores the Discord token sealed (AES-256-GCM)
+ * on disk and as ciphertext in Supabase — never plaintext anywhere.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto'
 import path from 'path'
 import {
   verifyToken,
@@ -29,6 +31,14 @@ import {
   listActiveQueues,
   waitForQueue,
 } from './quest-engine'
+import {
+  sealToken,
+  unsealToken,
+  supabaseConfigured,
+  cloudSaveMonitor,
+  cloudLoadMonitor,
+  cloudClearMonitor,
+} from './state-store'
 
 // ============================================================
 // Types
@@ -66,85 +76,6 @@ export interface MonitorState {
 const DATA_DIR = process.env.DATA_DIR || './data'
 const MONITOR_FILE = path.join(DATA_DIR, 'monitor.json')
 
-// ============================================================
-// Token encryption at rest (AES-256-GCM)
-// ============================================================
-// The Discord token is NEVER written to monitor.json in plaintext — it is
-// sealed with AES-256-GCM before touching the disk.
-//
-// Key resolution order:
-//   1. MONITOR_ENCRYPTION_KEY env — any long random string (recommended for
-//      Docker volume deployments: survives image rebuilds).
-//   2. Auto-generated 32-byte key in $DATA_DIR/.monitor-key (mode 0600,
-//      never committed — data/ is git-ignored). It is a SEPARATE file, so a
-//      leak/backup of monitor.json alone reveals nothing.
-//
-// Stored format: "enc:v1:<iv:b64>:<tag:b64>:<ciphertext:b64>"
-// A wrong/rotated key → decryption fails → the stored token is discarded
-// (fail-closed) and the user simply re-enables the monitor. Never crashes.
-
-const ENC_PREFIX = 'enc:v1:'
-const KEY_FILE = path.join(DATA_DIR, '.monitor-key')
-
-let cachedKey: Buffer | null = null
-
-function getMonitorKey(): Buffer {
-  if (cachedKey) return cachedKey
-  const envKey = process.env.MONITOR_ENCRYPTION_KEY
-  if (envKey && envKey.length >= 8) {
-    // Any string works — derive a stable 32-byte key from it.
-    cachedKey = scryptSync(envKey, 'dqc-monitor-key-v1', 32)
-    return cachedKey
-  }
-  // Auto-generate once and persist next to the data (mode 0600).
-  try {
-    if (existsSync(KEY_FILE)) {
-      const k = Buffer.from(readFileSync(KEY_FILE, 'utf-8').trim(), 'hex')
-      if (k.length === 32) {
-        cachedKey = k
-        return cachedKey
-      }
-    }
-    mkdirSync(DATA_DIR, { recursive: true })
-    const k = randomBytes(32)
-    writeFileSync(KEY_FILE, k.toString('hex') + '\n', { mode: 0o600 })
-    cachedKey = k
-  } catch (e) {
-    // Worst case (read-only fs): per-process random key — monitor.json then
-    // only survives this process. Acceptable, and still never plaintext.
-    console.error('[monitor] key setup failed — using ephemeral key:', e)
-    cachedKey = randomBytes(32)
-  }
-  return cachedKey
-}
-
-function sealToken(plain: string): string {
-  if (!plain) return ''
-  const iv = randomBytes(12)
-  const cipher = createCipheriv('aes-256-gcm', getMonitorKey(), iv)
-  const ct = Buffer.concat([cipher.update(plain, 'utf-8'), cipher.final()])
-  const tag = cipher.getAuthTag()
-  return `${ENC_PREFIX}${iv.toString('base64')}:${tag.toString('base64')}:${ct.toString('base64')}`
-}
-
-function unsealToken(stored: string): string | null {
-  if (!stored) return ''
-  if (!stored.startsWith(ENC_PREFIX)) {
-    // Old pre-encryption file: accept once and migrate — the next
-    // persist() re-writes it sealed. Plaintext is never re-written.
-    return stored
-  }
-  try {
-    const [iv, tag, ct] = stored.slice(ENC_PREFIX.length).split(':')
-    const decipher = createDecipheriv('aes-256-gcm', getMonitorKey(), Buffer.from(iv, 'base64'))
-    decipher.setAuthTag(Buffer.from(tag, 'base64'))
-    return Buffer.concat([decipher.update(Buffer.from(ct, 'base64')), decipher.final()]).toString('utf-8')
-  } catch {
-    // Wrong/rotated key or corrupted file → fail closed.
-    return null
-  }
-}
-
 /** How often the scheduler wakes up to check "is it time?" (drift-proof). */
 const CHECK_INTERVAL_MS = 60_000
 
@@ -169,6 +100,21 @@ function persist() {
   } catch (e) {
     console.error('[monitor] persist failed:', e)
   }
+}
+
+/** Mirror the toggle + sealed token to Supabase (restart-proofing). */
+async function syncCloud() {
+  if (!supabaseConfigured()) return
+  const st = getState()
+  if (!st) return
+  await cloudSaveMonitor({
+    enabled: st.enabled,
+    tokenSealed: st.enabled ? sealToken(st.token) : '',
+    userId: st.userId,
+    username: st.username,
+    intervalHours: st.intervalHours,
+    nextRunAt: st.nextRunAt,
+  })
 }
 
 function restoreFromDisk() {
@@ -198,12 +144,51 @@ function restoreFromDisk() {
       persist()
       console.log('[monitor] restored — missed run detected, firing in ~20s')
     }
-    if (saved.enabled) {
-      console.log(`[monitor] restored for @${saved.username} — next run ${new Date(saved.nextRunAt).toISOString()}`)
-    }
+    console.log(`[monitor] restored for @${saved.username} — next run ${new Date(saved.nextRunAt).toISOString()}`)
   } catch (e) {
     console.error('[monitor] restore failed:', e)
   }
+}
+
+/**
+ * Cloud restore — the volume-less restart path. When the data directory was
+ * wiped (no monitor.json), fetch the toggle state + sealed token from
+ * Supabase and resume the scheduler. Fail-closed on unseal errors.
+ */
+async function restoreFromCloud() {
+  if (!supabaseConfigured()) return
+  if (getState()?.enabled) return // disk restore already succeeded
+
+  const row = await cloudLoadMonitor()
+  if (!row || !row.enabled || !row.tokenSealed) return
+
+  const token = unsealToken(row.tokenSealed)
+  if (!token) {
+    // Wrong MONITOR_ENCRYPTION_KEY (e.g. rotated) or corrupted row → fail closed.
+    console.error(
+      '[monitor] cloud token could not be decrypted (key changed?) — monitor not resumed; log in and re-enable it.',
+    )
+    return
+  }
+
+  const st: MonitorState = {
+    enabled: true,
+    userId: row.userId,
+    username: row.username,
+    token,
+    intervalHours: row.intervalHours,
+    nextRunAt: row.nextRunAt > Date.now() ? row.nextRunAt : Date.now() + 20_000,
+    lastRunAt: null,
+    currentlyRunning: false,
+    createdAt: Date.now(),
+    history: [],
+  }
+  g.__questMonitor!.state = st
+  ensureScheduler()
+  persist() // re-materialize the disk copy (sealed) so the next restart is fast
+  console.log(
+    `[monitor] cloud restore — resumed for @${row.username} — next run ${new Date(st.nextRunAt).toISOString()}`,
+  )
 }
 
 // Module init (runs once per server process thanks to the globalThis guard)
@@ -211,6 +196,7 @@ if (!g.__questMonitor) {
   g.__questMonitor = { state: null, timer: null }
   restoreFromDisk()
   if (getState()?.enabled) ensureScheduler()
+  else void restoreFromCloud().catch(() => {})
 }
 
 function ensureScheduler() {
@@ -354,6 +340,9 @@ export async function enableMonitor(
   g.__questMonitor!.state = st
   persist()
   ensureScheduler()
+  // Restart-proofing: persist the toggle + sealed token to Supabase before
+  // responding, so the very next request already survives a hard restart.
+  await syncCloud().catch(() => {})
 
   const hrs = st.intervalHours >= 1 ? `${st.intervalHours}h` : `${Math.round(st.intervalHours * 3600)}s`
   return {
@@ -362,7 +351,7 @@ export async function enableMonitor(
   }
 }
 
-/** Disable the monitor (history is kept, token is wiped). */
+/** Disable the monitor (history is kept, token is wiped everywhere). */
 export function disableMonitor(): boolean {
   const st = getState()
   if (!st) return false
@@ -370,21 +359,19 @@ export function disableMonitor(): boolean {
   st.token = ''
   st.currentlyRunning = false
   persist()
+  void syncCloud().catch(() => {})
   return true
 }
 
-/** Fully wipe the monitor (disable + clear history + delete the file). */
+/** Fully wipe the monitor (disable + clear history + disk + cloud row). */
 export function clearMonitor(): boolean {
   g.__questMonitor!.state = null
   try {
     if (existsSync(MONITOR_FILE)) writeFileSync(MONITOR_FILE, 'null')
   } catch { /* ignore */ }
+  void cloudClearMonitor().catch(() => {})
   return true
 }
-
-// Note: data/.monitor-key (the auto-generated sealing key) is intentionally
-// kept — it is random bytes with no user data. clearMonitor() has already
-// wiped the sealed token itself.
 
 /** Silent token refresh: same user logs in with a newer token → update monitor. */
 export function updateMonitorToken(token: string, userId: string) {
@@ -392,7 +379,8 @@ export function updateMonitorToken(token: string, userId: string) {
   if (st?.enabled && st.userId === userId && st.token !== token) {
     st.token = token
     persist()
-    console.log('[monitor] token refreshed for', userId)
+    void syncCloud().catch(() => {})
+    console.log('[monitor] token refreshed') // identifiers are never logged
   }
 }
 

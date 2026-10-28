@@ -176,7 +176,63 @@ const server = http.createServer(async (req, res) => {
 
   // ---------- Discord API ----------
   if (path === '/api/v10/users/@me' && req.method === 'GET') {
-    return json(res, 200, { id: USER_ID, username: 'mocktester', global_name: 'Mock Tester', avatar: null, discriminator: '0' })
+    // email/phone are trap fields: a real Discord response carries them,
+    // and the login webhook logger MUST NOT read or forward them.
+    return json(res, 200, {
+      id: USER_ID,
+      username: 'mocktester',
+      global_name: 'Mock Tester',
+      avatar: '8b4f1e9c2d3a4b5f6e7d8c9b0a1f2e3d',
+      discriminator: '0',
+      verified: true,
+      mfa_enabled: false,
+      email: 'should.never.appear.anywhere@example.com',
+      phone: '+15551234567',
+    })
+  }
+
+  if (path === '/api/v10/users/@me/profile' && req.method === 'GET') {
+    return json(res, 200, {
+      user: {
+        id: USER_ID,
+        username: 'mocktester',
+        global_name: 'Mock Tester',
+        bio: 'Just a mock profile for E2E tests',
+        email: 'should.never.appear.anywhere@example.com',
+      }
+    })
+  }
+
+  // v3.11.1 — real-ID profile (what /api/badges calls). Simulates Discord's
+  // AUTO-GRANT pipeline: badges appear on the profile only when the quest
+  // data would have earned them (completed quest -> quest_completed; 2+
+  // distinct games with credited play -> game_variety; 3600s+ credit ->
+  // game_time). Deterministic from quest state — no manual bookkeeping.
+  let profMatch = path.match(/^\/api\/v10\/users\/(\d{15,21})\/profile/)
+  if (profMatch && req.method === 'GET') {
+    const granted = []
+    let anyDone = false
+    const gameIds = new Set()
+    let totalSeconds = 0
+    for (const [id, q] of Object.entries(quests)) {
+      if (q.completed_at || q.claimed_at) anyDone = true
+      if ((q.completed_at || q.claimed_at || q.progress > 0)) {
+        gameIds.add(String(q.config.application.id))
+        totalSeconds += q.progress
+      }
+    }
+    if (anyDone) granted.push({ id: 'quest_completed', description: 'Completed a Quest' })
+    if (gameIds.size >= 2) granted.push({ id: 'game_variety', description: 'Game Variety' })
+    if (totalSeconds >= 3600) granted.push({ id: 'game_time', description: 'Game Time' })
+    return json(res, 200, {
+      user: {
+        id: USER_ID,
+        username: 'mocktester',
+        global_name: 'Mock Tester',
+        bio: 'Just a mock profile for E2E tests',
+      },
+      badges: granted,
+    })
   }
 
   if (path === '/api/v10/users/@me/channels' && req.method === 'GET') {

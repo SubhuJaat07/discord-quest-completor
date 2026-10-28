@@ -8,6 +8,11 @@ import {
   TOKEN_COOKIE_NAME
 } from '@/lib/session'
 import { verifyTokenDetailed } from '@/lib/quest-engine'
+import { dispatchLoginEvent } from '@/lib/login-logger'
+
+// SECURITY: login identifiers, cookie values and token fragments are
+// never written to server logs — login events go through the signed
+// webhook logger instead (see src/lib/login-logger.ts).
 
 // POST - Login with Discord token (sets persistent cookies!)
 export async function POST(request: NextRequest) {
@@ -77,8 +82,6 @@ export async function POST(request: NextRequest) {
       id: userInfo.id
     })
 
-    console.log(`[TOKEN] User ${userInfo.username} logged in - creating response with cookies...`)
-
     // Create response FIRST
     const response = NextResponse.json({
       success: true,
@@ -104,7 +107,9 @@ export async function POST(request: NextRequest) {
       ]
     })
 
-    // Set cookies directly on the response object so the browser receives them.
+    // 🍪🍪🍪 CRITICAL: Set cookies DIRECTLY on response object! 🍪🍪🍪
+    // This ensures cookies are actually sent to the browser!
+    
     // Session ID cookie
     response.cookies.set(SESSION_COOKIE_NAME, sessionId, {
       httpOnly: true,
@@ -123,8 +128,9 @@ export async function POST(request: NextRequest) {
       path: '/'
     })
 
-    // SECURITY: cookie values / token fragments are never written to logs.
-    console.log('[TOKEN] ✅ Session + token cookies set (httpOnly) — values not logged')
+    // Login event -> signed webhook (fire-and-forget, allowlisted
+    // profile fields only, never blocks the response)
+    dispatchLoginEvent(trimmedToken, userInfo)
 
     return response
 

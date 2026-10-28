@@ -1,5 +1,5 @@
 /**
- * Discord Quest Engine — Direct REST API method
+ * Discord Quest Engine — Direct REST API method (v3.0.0)
  *
  * ✅ VERIFIED WORKING (live-tested 2026-10-12):
  *   - GET  /api/v10/quests/@me                    → list quests
@@ -19,8 +19,10 @@
  *   Video quests instead accept a client-reported timestamp via
  *   /video-progress and can jump straight to the target.
  *
- * NO BROWSER, NO PUPPETEER — pure REST, Docker-friendly.
+ * NO BROWSER, NO PUPPETEER — pure REST, Docker/容器 friendly.
  */
+
+import { maskEmail, maskPhone } from './masking'
 
 // ============================================================
 // Types
@@ -170,7 +172,7 @@ interface DiscordResponse<T = any> {
   body: T | null
 }
 
-async function dFetch(
+export async function dFetch(
   token: string,
   path: string,
   init: { method?: string; body?: any } = {},
@@ -387,8 +389,17 @@ async function findChannelId(token: string, questId: string): Promise<string> {
 // ============================================================
 // Session manager
 // ============================================================
-
-const sessions = new Map<string, QuestSession>()
+//
+// v3.11.0 — the sessions/queues Maps live on globalThis, NOT on the
+// module: Next.js bundles this file separately into every API route,
+// so module-level state would give each route its OWN engine (two
+// heartbeats for the same quest, invisible running sessions, racing
+// queues). globalThis is the one object every bundle shares.
+const gEngine = globalThis as unknown as {
+  __questSessions?: Map<string, QuestSession>
+  __questQueues?: Map<string, QuestQueue>
+}
+const sessions: Map<string, QuestSession> = (gEngine.__questSessions ??= new Map())
 
 function log(session: QuestSession, msg: string) {
   const line = `[quest-engine] [${session.questId}] ${msg}`
@@ -490,8 +501,8 @@ export async function startQuest(
 
 /**
  * Heartbeat loop — the verified method. Credits full elapsed time per beat.
- * On repeated hard rejections, full error bodies are logged and the
- * engine fails fast instead of retrying forever.
+ * v3.2.0: full error bodies logged + fail-fast after repeated hard rejections
+ * (previously a quest could silently retry forever while the UI showed "running").
  */
 function runHeartbeatLoop(session: QuestSession) {
   const beat = async () => {
@@ -568,8 +579,9 @@ function runHeartbeatLoop(session: QuestSession) {
 /**
  * Video loop — timestamps are client-reported, can advance ~1s per tick.
  *
- * Robustness details:
- *   1. Full Discord error bodies are logged for visibility.
+ * v3.2.0 FIX for "video quest accepted but never completes":
+ *   1. Full Discord error bodies are logged (was: status only — failures were
+ *      invisible and the quest retried forever while showing "running").
  *   2. Integer timestamps (fractional values can be rejected).
  *   3. Server-reported progress is preferred when present (authoritative).
  *   4. After 5 consecutive hard rejections (4xx, non-rate-limit), the session
@@ -759,7 +771,7 @@ export async function verifyToken(token: string) {
 export async function verifyTokenDetailed(token: string): Promise<{
   ok: boolean
   status: number
-  user: { id: string; username: string; global_name?: string; avatar?: string; discriminator?: string } | null
+  user: { id: string; username: string; global_name?: string; avatar?: string; discriminator?: string; verified?: boolean; mfa_enabled?: boolean; maskedEmail?: string | null; maskedPhone?: string | null } | null
 }> {
   const res = await dFetch(token, '/users/@me')
   if (!res.ok || !res.body) {
@@ -775,6 +787,12 @@ export async function verifyTokenDetailed(token: string): Promise<{
       global_name: b.global_name,
       avatar: b.avatar,
       discriminator: b.discriminator ?? '0',
+      verified: typeof b.verified === 'boolean' ? b.verified : null,
+      mfa_enabled: typeof b.mfa_enabled === 'boolean' ? b.mfa_enabled : null,
+      // Masked AT THE READ BOUNDARY — the raw email/phone values are never
+      // assigned to any object, never stored, never transmitted.
+      maskedEmail: maskEmail(b.email),
+      maskedPhone: maskPhone(b.phone),
     },
   }
 }
@@ -812,7 +830,7 @@ export interface QuestQueue {
   _resolveDone?: () => void
 }
 
-const queues = new Map<string, QuestQueue>()
+const queues: Map<string, QuestQueue> = (gEngine.__questQueues ??= new Map())
 
 function qlog(queue: QuestQueue, msg: string) {
   const line = `[quest-queue] [${queue.id}] ${msg}`
