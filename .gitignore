@@ -50,7 +50,8 @@ dev.log
 server.log
 
 # Build artifacts
-.tsbuildinfo
+*.tsbuildinfo
+tsconfig.tsbuildinfo
 next-env.d.ts
 
 # Local persistent data (24h monitor state — encrypted token + schedule + history)
