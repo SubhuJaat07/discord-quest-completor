@@ -4,9 +4,8 @@
 // ------------------------------------------------------------
 // Problem this solves: a fresh self-hosted Supabase (or a new
 // Coolify deploy pointing at one) has NO tables. The monitor
-// toggle silently no-ops (cloud save fails) and badge tracking
-// can't persist — exactly the "settings went gayab after
-// restart" bug.
+// toggle silently no-ops (cloud save fails) — exactly the
+// "settings went gayab after restart" bug.
 //
 // Solution — same pattern as the cutiee bot live repo: when the
 // server boots (the Next.js "ready event" = instrumentation.ts
@@ -87,45 +86,11 @@ const TABLES: Array<{ name: string; ddl: string[] }> = [
       `alter table monitor_state enable row level security`,
     ],
   },
-  {
-    name: 'badge_completions',
-    ddl: [
-      `create table if not exists badge_completions (
-        user_id      text        not null,
-        badge_id     text        not null,
-        tier_name    text,
-        completed_at timestamptz not null default now(),
-        primary key (user_id, badge_id)
-      )`,
-      `alter table badge_completions enable row level security`,
-    ],
-  },
-  {
-    // v3.11.0 — REAL quest-engine badge tasks: the Complete button runs
-    // the same engine as Start All; progress is read live from Discord's
-    // quest data. The row carries a SEALED token so the runner survives
-    // restarts (same contract as monitor_state).
-    name: 'badge_tasks',
-    ddl: [
-      `create table if not exists badge_tasks (
-        user_id      text        not null,
-        badge_id     text        not null,
-        tier_name    text,
-        status       text        not null default 'running',
-        started_at   timestamptz not null default now(),
-        duration_ms  bigint      not null default 0,
-        completes_at timestamptz not null default now(),
-        completed_at timestamptz,
-        updated_at   timestamptz not null default now(),
-        primary key (user_id, badge_id)
-      )`,
-      `alter table badge_tasks enable row level security`,
-      // v3.11.0 engine-task columns (idempotent on existing deploys)
-      `alter table badge_tasks add column if not exists token_sealed text`,
-      `alter table badge_tasks add column if not exists last_status text`,
-      `alter table badge_tasks add column if not exists last_error text`,
-    ],
-  },
+  // v3.11.4 — badge_completions + badge_tasks are GONE together with
+  // the /badge page: badges are passive Discord telemetry awards (the
+  // Quests badge auto-grants when a quest completes), so the app keeps
+  // no badge tables. Existing leftover tables in old deploys are
+  // harmless and simply stop being touched.
 ]
 
 // ---------- env helpers ----------

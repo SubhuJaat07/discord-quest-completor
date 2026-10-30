@@ -2,23 +2,17 @@
 /**
  * Mock Supabase (PostgREST subset) for E2E tests — no real Supabase needed.
  *
- * Implements what src/lib/state-store.ts, badge-store.ts and badge-tasks.ts use:
+ * Implements what src/lib/state-store.ts uses:
  *   monitor_state:
  *     GET    /rest/v1/monitor_state?id=eq.singleton&select=...  → [row] | []
  *     POST   /rest/v1/monitor_state  (Prefer: merge-duplicates) → upsert, 201
  *     DELETE /rest/v1/monitor_state?id=eq.singleton             → 204
- *   badge_completions (v3.9.0):
- *     GET    /rest/v1/badge_completions?user_id=eq.<id>&select=... → [rows]
- *     POST   /rest/v1/badge_completions  (Prefer: merge-duplicates) → upsert, 201
- *     DELETE /rest/v1/badge_completions?user_id=eq.<id>&badge_id=eq.<b> → 204
- *   badge_tasks (v3.10.0):
- *     GET    /rest/v1/badge_tasks?user_id=eq.<id>&select=... → [rows]
- *            GET /rest/v1/badge_tasks?status=eq.running&select=... → [rows]
- *     POST   /rest/v1/badge_tasks  (Prefer: merge-duplicates) → upsert, 201
- *     DELETE /rest/v1/badge_tasks?user_id=eq.<id>&badge_id=eq.<b> → 204
  *   rpc exec_sql (cutiee pattern):
  *     POST   /rest/v1/rpc/exec_sql  {query: "CREATE TABLE IF NOT EXISTS ..."}
  *            → registers the table (regex on table name) → 200 "OK"
+ *
+ * (v3.11.4 — the badge_completions / badge_tasks handlers are gone with
+ * the /badge page; the app keeps no badge tables.)
  *
  * Auth mirrors Supabase: `apikey` + `Authorization: Bearer <key>` headers
  * must match API_KEY. Rows are mirrored to STORE_FILE so tests can assert
@@ -122,77 +116,6 @@ const server = http.createServer(async (req, res) => {
         delete store.singleton
         saveStore(store)
       }
-      res.writeHead(204)
-      return res.end()
-    }
-  }
-
-  // ================= badge_completions (v3.9.0) =================
-  if (table === 'badge_completions') {
-    const f = filters(url)
-    const store = loadStore()
-    const badges = store.badge_completions ?? {}
-
-    if (req.method === 'GET') {
-      // PostgREST-faithful: every `col=eq.value` filter applies (AND)
-      const rows = Object.values(badges).filter((r) =>
-        Object.entries(f).every(([k, v]) => r[k] === v)
-      )
-      return json(res, 200, rows)
-    }
-
-    if (req.method === 'POST') {
-      const row = await readBody(req)
-      if (!row || !row.user_id || !row.badge_id) return json(res, 400, { message: 'bad json' })
-      badges[`${row.user_id}:${row.badge_id}`] = { ...row }
-      store.badge_completions = badges
-      saveStore(store)
-      return json(res, 201, [row])
-    }
-
-    if (req.method === 'DELETE') {
-      for (const [k, r] of Object.entries(badges)) {
-        if ((!f.user_id || r.user_id === f.user_id) && (!f.badge_id || r.badge_id === f.badge_id)) {
-          delete badges[k]
-        }
-      }
-      store.badge_completions = badges
-      saveStore(store)
-      res.writeHead(204)
-      return res.end()
-    }
-  }
-
-  // ================= badge_tasks (v3.10.0) =================
-  if (table === 'badge_tasks') {
-    const f = filters(url)
-    const store = loadStore()
-    const tasks = store.badge_tasks ?? {}
-
-    if (req.method === 'GET') {
-      // PostgREST-faithful: every `col=eq.value` filter applies (AND)
-      let rows = Object.values(tasks)
-      rows = rows.filter((r) => Object.entries(f).every(([k, v]) => r[k] === v))
-      return json(res, 200, rows)
-    }
-
-    if (req.method === 'POST') {
-      const row = await readBody(req)
-      if (!row || !row.user_id || !row.badge_id) return json(res, 400, { message: 'bad json' })
-      tasks[`${row.user_id}:${row.badge_id}`] = { ...tasks[`${row.user_id}:${row.badge_id}`], ...row }
-      store.badge_tasks = tasks
-      saveStore(store)
-      return json(res, 201, [row])
-    }
-
-    if (req.method === 'DELETE') {
-      for (const [k, r] of Object.entries(tasks)) {
-        if ((!f.user_id || r.user_id === f.user_id) && (!f.badge_id || r.badge_id === f.badge_id)) {
-          delete tasks[k]
-        }
-      }
-      store.badge_tasks = tasks
-      saveStore(store)
       res.writeHead(204)
       return res.end()
     }

@@ -4,4 +4,4 @@
  * Every consumer (db-init boot webhook, /api/version) imports from here
  * so no endpoint can ever serve a stale hardcoded number again.
  */
-export const APP_VERSION = '3.11.3'
+export const APP_VERSION = '3.11.4'

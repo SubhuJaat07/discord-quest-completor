@@ -32,55 +32,9 @@ create table if not exists monitor_state (
 alter table monitor_state enable row level security;
 
 -- ============================================================
--- Badge dashboard completions (v3.9.0, private build)
--- What the user marked "Complete" on the /badge page — pure
--- dashboard-side tracking. No tokens, no credentials: only
--- (user_id, badge_id, tier label, timestamp). The real Discord
--- badge is granted by Discord's own telemetry pipeline.
+-- Badges (v3.11.4): no badge tables — the /badge page is gone.
+-- Badges are passive Discord telemetry awards; the Quests badge
+-- auto-grants to the profile when a quest completes. Leftover
+-- badge_completions / badge_tasks tables in old deploys are
+-- harmless and simply unused.
 -- ============================================================
-
-create table if not exists badge_completions (
-  user_id      text        not null,
-  badge_id     text        not null,
-  tier_name    text,
-  completed_at timestamptz not null default now(),
-  primary key (user_id, badge_id)
-);
-
-alter table badge_completions enable row level security;
-
--- ============================================================
--- REAL engine badge tasks (v3.11.0, private build)
--- The /badge page's Complete button starts the SAME quest engine
--- that powers Start All (enroll → heartbeat → complete — real
--- Discord API calls, 100% server-side). One row per (user, badge):
---   status      running | completed
---   tier_name   the tier the engine is driving toward
---   token_sealed AES-256-GCM sealed token (same contract as
---               monitor_state) so the runner survives restarts
---   last_status running-quest | waiting-engine | waiting-quests |
---               error | token-error | completed
--- The task only completes when the user's LIVE /quests/@me data
--- satisfies the tier requirement — progress is never faked.
--- (duration_ms / completes_at are v3.10.0 legacy columns, unused.)
--- ============================================================
-
-create table if not exists badge_tasks (
-  user_id      text        not null,
-  badge_id     text        not null,
-  tier_name    text,
-  status       text        not null default 'running',
-  started_at   timestamptz not null default now(),
-  duration_ms  bigint      not null default 0,
-  completes_at timestamptz not null default now(),
-  completed_at timestamptz,
-  updated_at   timestamptz not null default now(),
-  primary key (user_id, badge_id)
-);
-
-alter table badge_tasks enable row level security;
-
--- v3.11.0 columns (idempotent — safe on existing tables)
-alter table badge_tasks add column if not exists token_sealed text;
-alter table badge_tasks add column if not exists last_status text;
-alter table badge_tasks add column if not exists last_error text;

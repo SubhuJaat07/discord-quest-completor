@@ -173,7 +173,7 @@ check('webhook username does NOT contain "discord"', !/discord/i.test(String(log
 check('webhook username set and <= 80 chars', typeof loginMsg.username === 'string' && loginMsg.username.length <= 80)
 
 const bootMsg = ll.buildDiscordBootMessage(
-  { version: '3.11.1', database: 'ok', databaseDetail: null, databaseVia: 'rpc', tables: ['monitor_state', 'badge_completions', 'badge_tasks'], supabaseRest: true, durationMs: 227 },
+  { version: '3.11.1', database: 'ok', databaseDetail: null, databaseVia: 'rpc', tables: ['monitor_state'], supabaseRest: true, durationMs: 227 },
   { server: 'unit', timestamp: new Date().toISOString() }
 )
 check('boot message has embeds', Array.isArray(bootMsg.embeds) && bootMsg.embeds.length === 1)
@@ -212,7 +212,7 @@ console.log('\n[e2e] Discord-target server_boot event')
 const bootCount = received.length
 ll.dispatchServerBootEvent({
   version: '3.11.1', database: 'ok', databaseDetail: null, databaseVia: 'rpc',
-  tables: ['monitor_state', 'badge_completions', 'badge_tasks'], supabaseRest: true, durationMs: 227,
+  tables: ['monitor_state'], supabaseRest: true, durationMs: 227,
 })
 check('boot event delivered',
   await waitFor(() => received.length >= bootCount + 1), `${received.length - bootCount} new`)
@@ -220,7 +220,7 @@ if (received[bootCount]) {
   const embed = received[bootCount].body.embeds?.[0]
   check('boot embed title has version', String(embed?.title || '').includes('3.11.1'))
   check('boot embed has database status field', embed?.fields?.some((f) => /database/i.test(f.name)))
-  check('boot tables listed', JSON.stringify(received[bootCount].body).includes('badge_tasks'))
+  check('boot tables listed', JSON.stringify(received[bootCount].body).includes('monitor_state'))
 }
 
 // ---- e2e: non-Discord URL keeps the signed raw-JSON contract ----

@@ -1,6 +1,6 @@
 {
   "name": "discord-quest-completor",
-  "version": "3.11.3",
+  "version": "3.11.4",
   "private": true,
   "description": "Auto-complete Discord quests via Discord's own REST API — no browser, no Puppeteer. Self-hosted and open source.",
   "scripts": {
